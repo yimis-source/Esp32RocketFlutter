@@ -17,16 +17,18 @@ class MotorControlScreen extends StatefulWidget {
 }
 
 class _MotorControlScreenState extends State<MotorControlScreen> {
-  int _panAngle = 90;  // Azimut (Pan)
-  int _tiltAngle = 90; // Altura (Tilt)
-  // Variables para tracking del valor temporal mientras se arrastra
+  int _panAngle = 90;
+  int _tiltAngle = 90;
   int _panTempAngle = 90;
   int _tiltTempAngle = 90;
   
-  // Variables para el modo de control
-  bool _directMotorControl = false; // Por defecto, usar control Pan/Tilt
+  bool _directMotorControl = false;
   int _motor1Angle = 90;
   int _motor2Angle = 90;
+  
+  bool _triggerArmed = false;
+  bool _triggerFired = false;
+  String _triggerStatus = "Desarmado";
   
   String _statusMessage = "Conectado";
   String? _receivedData;
@@ -37,18 +39,15 @@ class _MotorControlScreenState extends State<MotorControlScreen> {
     super.initState();
     _setupDataListening();
     
-    // Enviar posiciones iniciales
     _sendPanTiltCommand(_panAngle, _tiltAngle);
   }
 
   void _setupDataListening() {
-    // Escuchar datos entrantes
     _dataSubscription = widget.connection.input?.listen((data) {
       String message = utf8.decode(data);
       setState(() {
         _receivedData = message;
         
-        // Procesar retroalimentación de posición
         if (message.startsWith("POS:")) {
           List<String> parts = message.substring(4).split(',');
           if (parts.length == 2) {
@@ -60,7 +59,32 @@ class _MotorControlScreenState extends State<MotorControlScreen> {
               _statusMessage = "Error al procesar datos: $e";
             }
           }
-        } else {
+        } 
+        else if (message.startsWith("TRIGGER:")) {
+          if (message.contains("ARMED")) {
+            _triggerArmed = true;
+            _triggerFired = false;
+            _triggerStatus = "Armado";
+          } 
+          else if (message.contains("FIRED")) {
+            _triggerFired = true;
+            _triggerStatus = "Accionado";
+          }
+          else if (message.contains("RESET")) {
+            _triggerArmed = false;
+            _triggerFired = false;
+            _triggerStatus = "Desarmado";
+          }
+          else if (message.contains("ERROR")) {
+            _triggerStatus = "Error: " + message.substring(14);
+          }
+          else if (message.contains("COMPLETED")) {
+            _triggerStatus = "Ciclo completo";
+            _triggerArmed = false;
+            _triggerFired = false;
+          }
+        } 
+        else {
           _statusMessage = "Mensaje recibido: $message";
         }
       });
@@ -78,7 +102,6 @@ class _MotorControlScreenState extends State<MotorControlScreen> {
     });
   }
 
-  // Envía comandos de pan/tilt directamente
   void _sendPanTiltCommand(int pan, int tilt) {
     String command = "PT:$pan,$tilt\n";
     widget.connection.writeString(command);
@@ -88,7 +111,6 @@ class _MotorControlScreenState extends State<MotorControlScreen> {
     });
   }
   
-  // Métodos para control directo de motores (sin compensación)
   void _sendMotor1Command(int angle) {
     String command = "M1:$angle\n";
     widget.connection.writeString(command);
@@ -97,6 +119,40 @@ class _MotorControlScreenState extends State<MotorControlScreen> {
   void _sendMotor2Command(int angle) {
     String command = "M2:$angle\n";
     widget.connection.writeString(command);
+  }
+
+  void _armTrigger() {
+    String command = "TRIGGER:ARM\n";
+    widget.connection.writeString(command);
+    
+    setState(() {
+      _triggerStatus = "Armando...";
+    });
+  }
+  
+  void _fireTrigger() {
+    if (!_triggerArmed) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("El gatillo debe estar armado primero"))
+      );
+      return;
+    }
+    
+    String command = "TRIGGER:FIRE\n";
+    widget.connection.writeString(command);
+    
+    setState(() {
+      _triggerStatus = "Accionando...";
+    });
+  }
+  
+  void _resetTrigger() {
+    String command = "TRIGGER:RESET\n";
+    widget.connection.writeString(command);
+    
+    setState(() {
+      _triggerStatus = "Reseteando...";
+    });
   }
 
   void _disconnectDevice() {
@@ -140,7 +196,6 @@ class _MotorControlScreenState extends State<MotorControlScreen> {
               Text('Último mensaje: $_receivedData', style: TextStyle(fontSize: 12, color: Colors.grey)),
             SizedBox(height: 10),
             
-            // Switch para cambiar entre control de Pan/Tilt y control directo de motores
             SwitchListTile(
               title: Text('Modo de control'),
               subtitle: Text(_directMotorControl ? 
@@ -156,9 +211,7 @@ class _MotorControlScreenState extends State<MotorControlScreen> {
             
             SizedBox(height: 20),
             
-            // Control basado en el modo seleccionado
             if (!_directMotorControl) 
-              // Control de Pan/Tilt (compensado)
               Column(
                 children: [
                   Text('Pan (Azimut): $_panTempAngle°', style: TextStyle(fontSize: 16)),
@@ -203,7 +256,6 @@ class _MotorControlScreenState extends State<MotorControlScreen> {
                 ],
               )
             else
-              // Control directo de motores
               Column(
                 children: [
                   Text('Motor 1: $_motor1Angle°', style: TextStyle(fontSize: 16)),
@@ -307,6 +359,56 @@ class _MotorControlScreenState extends State<MotorControlScreen> {
                   child: Text('Máximo (180°)'),
                 ),
               ],
+            ),
+            
+            SizedBox(height: 30),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      'Control de Gatillo',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      textAlign: TextAlign.center,
+                    ),
+                    SizedBox(height: 10),
+                    Text('Estado: $_triggerStatus', 
+                        style: TextStyle(fontSize: 16)),
+                    SizedBox(height: 15),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        ElevatedButton.icon(
+                          onPressed: _armTrigger,
+                          icon: Icon(Icons.lock_outline),
+                          label: Text('Armar'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.blue,
+                          ),
+                        ),
+                        ElevatedButton.icon(
+                          onPressed: _triggerArmed ? _fireTrigger : null,
+                          icon: Icon(Icons.flash_on),
+                          label: Text('Disparar'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.red,
+                          ),
+                        ),
+                        ElevatedButton.icon(
+                          onPressed: _resetTrigger,
+                          icon: Icon(Icons.restart_alt),
+                          label: Text('Reset'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.grey,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
             ),
           ],
         ),
