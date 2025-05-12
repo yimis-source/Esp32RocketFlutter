@@ -7,7 +7,7 @@ class MotorControlScreen extends StatefulWidget {
   final BluetoothDevice device;
   final BluetoothConnection connection;
 
-  MotorControlScreen({
+  const MotorControlScreen({super.key, 
     required this.device,
     required this.connection,
   });
@@ -17,8 +17,17 @@ class MotorControlScreen extends StatefulWidget {
 }
 
 class _MotorControlScreenState extends State<MotorControlScreen> {
+  int _panAngle = 90;  // Azimut (Pan)
+  int _tiltAngle = 90; // Altura (Tilt)
+  // Variables para tracking del valor temporal mientras se arrastra
+  int _panTempAngle = 90;
+  int _tiltTempAngle = 90;
+  
+  // Variables para el modo de control
+  bool _directMotorControl = false; // Por defecto, usar control Pan/Tilt
   int _motor1Angle = 90;
   int _motor2Angle = 90;
+  
   String _statusMessage = "Conectado";
   String? _receivedData;
   StreamSubscription? _dataSubscription;
@@ -28,8 +37,8 @@ class _MotorControlScreenState extends State<MotorControlScreen> {
     super.initState();
     _setupDataListening();
     
-    _sendMotor1Angle(_motor1Angle);
-    _sendMotor2Angle(_motor2Angle);
+    // Enviar posiciones iniciales
+    _sendPanTiltCommand(_panAngle, _tiltAngle);
   }
 
   void _setupDataListening() {
@@ -38,10 +47,24 @@ class _MotorControlScreenState extends State<MotorControlScreen> {
       String message = utf8.decode(data);
       setState(() {
         _receivedData = message;
-        _statusMessage = "Mensaje recibido: $message";
+        
+        // Procesar retroalimentación de posición
+        if (message.startsWith("POS:")) {
+          List<String> parts = message.substring(4).split(',');
+          if (parts.length == 2) {
+            try {
+              int reportedPan = int.parse(parts[0]);
+              int reportedTilt = int.parse(parts[1]);
+              _statusMessage = "Posición actual: Pan: $reportedPan°, Tilt: $reportedTilt°";
+            } catch (e) {
+              _statusMessage = "Error al procesar datos: $e";
+            }
+          }
+        } else {
+          _statusMessage = "Mensaje recibido: $message";
+        }
       });
     }, onDone: () {
-      
       if (mounted) {
         setState(() {
           _statusMessage = "Desconectado";
@@ -55,14 +78,23 @@ class _MotorControlScreenState extends State<MotorControlScreen> {
     });
   }
 
-  void _sendMotor1Angle(int angle) {
-   
+  // Envía comandos de pan/tilt directamente
+  void _sendPanTiltCommand(int pan, int tilt) {
+    String command = "PT:$pan,$tilt\n";
+    widget.connection.writeString(command);
+    
+    setState(() {
+      _statusMessage = "Enviando Pan: $pan°, Tilt: $tilt°";
+    });
+  }
+  
+  // Métodos para control directo de motores (sin compensación)
+  void _sendMotor1Command(int angle) {
     String command = "M1:$angle\n";
     widget.connection.writeString(command);
   }
-
-  void _sendMotor2Angle(int angle) {
-    
+  
+  void _sendMotor2Command(int angle) {
     String command = "M2:$angle\n";
     widget.connection.writeString(command);
   }
@@ -83,7 +115,7 @@ class _MotorControlScreenState extends State<MotorControlScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Control de Motores'),
+        title: Text('Control de Motores (Diferencial)'),
       ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
@@ -102,75 +134,175 @@ class _MotorControlScreenState extends State<MotorControlScreen> {
                 ),
               ],
             ),
-            SizedBox(height: 20),
+            SizedBox(height: 10),
             Text(_statusMessage, style: TextStyle(fontSize: 14)),
             if (_receivedData != null)
               Text('Último mensaje: $_receivedData', style: TextStyle(fontSize: 12, color: Colors.grey)),
+            SizedBox(height: 10),
+            
+            // Switch para cambiar entre control de Pan/Tilt y control directo de motores
+            SwitchListTile(
+              title: Text('Modo de control'),
+              subtitle: Text(_directMotorControl ? 
+                'Control directo de motores' : 
+                'Control de Pan/Tilt (compensado)'),
+              value: _directMotorControl,
+              onChanged: (value) {
+                setState(() {
+                  _directMotorControl = value;
+                });
+              },
+            ),
+            
             SizedBox(height: 20),
-            Text('Ángulo Motor 1: $_motor1Angle°', style: TextStyle(fontSize: 16)),
-            Slider(
-              value: _motor1Angle.toDouble(),
-              min: 0,
-              max: 180,
-              divisions: 180,
-              label: '$_motor1Angle°',
-              onChanged: (value) {
-                setState(() {
-                  _motor1Angle = value.toInt();
-                });
-                _sendMotor1Angle(_motor1Angle);
-              },
-            ),
-            SizedBox(height: 30),
-            Text('Ángulo Motor 2: $_motor2Angle°', style: TextStyle(fontSize: 16)),
-            Slider(
-              value: _motor2Angle.toDouble(),
-              min: 0,
-              max: 180,
-              divisions: 180,
-              label: '$_motor2Angle°',
-              onChanged: (value) {
-                setState(() {
-                  _motor2Angle = value.toInt();
-                });
-                _sendMotor2Angle(_motor2Angle);
-              },
-            ),
-            SizedBox(height: 30),
+            
+            // Control basado en el modo seleccionado
+            if (!_directMotorControl) 
+              // Control de Pan/Tilt (compensado)
+              Column(
+                children: [
+                  Text('Pan (Azimut): $_panTempAngle°', style: TextStyle(fontSize: 16)),
+                  Slider(
+                    value: _panTempAngle.toDouble(),
+                    min: 0,
+                    max: 180,
+                    divisions: 180,
+                    label: '$_panTempAngle°',
+                    onChanged: (value) {
+                      setState(() {
+                        _panTempAngle = value.toInt();
+                      });
+                    },
+                    onChangeEnd: (value) {
+                      setState(() {
+                        _panAngle = value.toInt();
+                      });
+                      _sendPanTiltCommand(_panAngle, _tiltAngle);
+                    },
+                  ),
+                  SizedBox(height: 20),
+                  Text('Tilt (Elevación): $_tiltTempAngle°', style: TextStyle(fontSize: 16)),
+                  Slider(
+                    value: _tiltTempAngle.toDouble(),
+                    min: 0,
+                    max: 180,
+                    divisions: 180,
+                    label: '$_tiltTempAngle°',
+                    onChanged: (value) {
+                      setState(() {
+                        _tiltTempAngle = value.toInt();
+                      });
+                    },
+                    onChangeEnd: (value) {
+                      setState(() {
+                        _tiltAngle = value.toInt();
+                      });
+                      _sendPanTiltCommand(_panAngle, _tiltAngle);
+                    },
+                  ),
+                ],
+              )
+            else
+              // Control directo de motores
+              Column(
+                children: [
+                  Text('Motor 1: $_motor1Angle°', style: TextStyle(fontSize: 16)),
+                  Slider(
+                    value: _motor1Angle.toDouble(),
+                    min: 0,
+                    max: 180,
+                    divisions: 180,
+                    label: '$_motor1Angle°',
+                    onChanged: (value) {
+                      setState(() {
+                        _motor1Angle = value.toInt();
+                      });
+                      _sendMotor1Command(_motor1Angle);
+                    },
+                  ),
+                  SizedBox(height: 20),
+                  Text('Motor 2: $_motor2Angle°', style: TextStyle(fontSize: 16)),
+                  Slider(
+                    value: _motor2Angle.toDouble(),
+                    min: 0,
+                    max: 180,
+                    divisions: 180,
+                    label: '$_motor2Angle°',
+                    onChanged: (value) {
+                      setState(() {
+                        _motor2Angle = value.toInt();
+                      });
+                      _sendMotor2Command(_motor2Angle);
+                    },
+                  ),
+                ],
+              ),
+            
+            SizedBox(height: 20),
           
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
                 ElevatedButton(
                   onPressed: () {
-                    setState(() {
-                      _motor1Angle = 0;
-                      _motor2Angle = 0;
-                    });
-                    _sendMotor1Angle(0);
-                    _sendMotor2Angle(0);
+                    if (_directMotorControl) {
+                      setState(() {
+                        _motor1Angle = 0;
+                        _motor2Angle = 0;
+                      });
+                      _sendMotor1Command(0);
+                      _sendMotor2Command(0);
+                    } else {
+                      setState(() {
+                        _panAngle = 0;
+                        _tiltAngle = 0;
+                        _panTempAngle = 0;
+                        _tiltTempAngle = 0;
+                      });
+                      _sendPanTiltCommand(0, 0);
+                    }
                   },
                   child: Text('Mínimo (0°)'),
                 ),
                 ElevatedButton(
                   onPressed: () {
-                    setState(() {
-                      _motor1Angle = 90;
-                      _motor2Angle = 90;
-                    });
-                    _sendMotor1Angle(90);
-                    _sendMotor2Angle(90);
+                    if (_directMotorControl) {
+                      setState(() {
+                        _motor1Angle = 90;
+                        _motor2Angle = 90;
+                      });
+                      _sendMotor1Command(90);
+                      _sendMotor2Command(90);
+                    } else {
+                      setState(() {
+                        _panAngle = 90;
+                        _tiltAngle = 90;
+                        _panTempAngle = 90;
+                        _tiltTempAngle = 90;
+                      });
+                      _sendPanTiltCommand(90, 90);
+                    }
                   },
                   child: Text('Centro (90°)'),
                 ),
                 ElevatedButton(
                   onPressed: () {
-                    setState(() {
-                      _motor1Angle = 180;
-                      _motor2Angle = 180;
-                    });
-                    _sendMotor1Angle(180);
-                    _sendMotor2Angle(180);
+                    if (_directMotorControl) {
+                      setState(() {
+                        _motor1Angle = 180;
+                        _motor2Angle = 180;
+                      });
+                      _sendMotor1Command(180);
+                      _sendMotor2Command(180);
+                    } else {
+                      setState(() {
+                        _panAngle = 180;
+                        _tiltAngle = 180;
+                        _panTempAngle = 180;
+                        _tiltTempAngle = 180;
+                      });
+                      _sendPanTiltCommand(180, 180);
+                    }
                   },
                   child: Text('Máximo (180°)'),
                 ),
