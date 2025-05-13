@@ -7,7 +7,7 @@
 
 #define MOTOR1_PIN 14
 #define MOTOR2_PIN 27
-#define TRIGGER_PIN 12
+#define TRIGGER_PIN 26
 
 Servo motor1;
 Servo motor2;
@@ -170,24 +170,34 @@ void processCommand(String command) {
 }
 
 void calculateMotorsFromPanTilt() {
-  currentMotor1Angle = (currentPanAngle + currentTiltAngle) / 2;
-  currentMotor2Angle = (currentPanAngle - currentTiltAngle) / 2 + 90;
+  int panOffset = currentPanAngle - 90;
   
+ 
+  currentMotor1Angle = 90 + panOffset;
+  currentMotor2Angle = 90 + panOffset;
+  
+
+  int tiltOffset = currentTiltAngle - 90;
+  currentMotor2Angle += tiltOffset;
+  
+ 
   currentMotor1Angle = constrain(currentMotor1Angle, 0, 180);
   currentMotor2Angle = constrain(currentMotor2Angle, 0, 180);
   
-  Serial.print("Motor 1: ");
+  Serial.print("Motor 1 (base): ");
   Serial.print(currentMotor1Angle);
-  Serial.print(", Motor 2: ");
+  Serial.print(", Motor 2 (elevación): ");
   Serial.println(currentMotor2Angle);
 }
 
 void calculatePanTiltFromMotors() {
-  int panAngle = currentMotor1Angle - currentMotor2Angle + 90;
-  int tiltAngle = 2 * currentMotor1Angle - panAngle;
+
+  currentPanAngle = 90 + ((currentMotor1Angle - 90) + (currentMotor2Angle - 90)) / 2;
+  currentTiltAngle = 90 + (currentMotor2Angle - currentMotor1Angle);
   
-  currentPanAngle = constrain(panAngle, 0, 180);
-  currentTiltAngle = constrain(tiltAngle, 0, 180);
+  
+  currentPanAngle = constrain(currentPanAngle, 0, 180);
+  currentTiltAngle = constrain(currentTiltAngle, 0, 180);
 }
 
 void sendFeedback() {
